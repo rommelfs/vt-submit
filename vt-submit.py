@@ -1,26 +1,21 @@
 #!/usr/bin/env python
 
-__description__ = 'Program to submit files to VirusTotal'
-__author__ = 'Didier Stevens, Sascha Rommelfangen'
-__version__ = '0.0.4'
-__date__ = '2016/05/27'
+__description__ = 'Submit files and comments to VirusTotal or lookup scan results by file or hash'
+__author__ = 'Sascha Rommelfangen'
+__version__ = '0.0.1'
+__date__ = '2016/06/01'
 
 """
-
-Source code put in public domain by Didier Stevens, no Copyright
-https://DidierStevens.com
-Use at your own risk
-
-Addition to post comments along with a file upload by Sascha Rommelfangen (@rommelfs), CIRCL
-
-History:
-  2013/03/10: start based on virustotal-search.py version 0.0.5
-  2013/04/19: refactoring; proxies; password protected ZIP file
-  2013/09/22: bugfix error opening file
-  2013/12/06: v0.0.3: extra error handling
-  2013/12/10: handling when response_code not 1
-  2016/05/27: (@rommelfs) added support to post comments
-Todo:
+    vt-submit.py, inspired by earlier work of myself and code by Didier Stevens.
+    
+    Purposes: 
+                Get results from VirusTotal for a given file
+                Upload file to VirusTotal if explicitly specified
+                Add user comment to resource at VirusTotal
+    
+    Copyright:  Sascha Rommelfangen, CIRCL, Smile g.i.e, 2016-06-01
+    
+    License:    GNU General Public License v2.0
 """
 
 import optparse
@@ -29,14 +24,14 @@ import urllib2
 import time
 import sys
 import os
-import zipfile
+import hashlib
+import re
 
 try:
     import poster
 except:
     print('Module poster missing: https://pypi.python.org/pypi/poster')
-    exit()
-
+    sys.exit(22)
 try:
     import json
     jsonalias = json
@@ -46,74 +41,106 @@ except:
         jsonalias = simplejson
     except:
         print('Modules json and simplejson missing')
-        exit()
+        sys.exit(22)
 
-VIRUSTOTAL_API2_KEY = ''
-seconds_delay = 15
-HTTP_PROXY = ''
-HTTPS_PROXY = ''
+home = os.path.expanduser('~')
+keyfile = home + '/.virustotal.key'
+try:
+    api_key = open(keyfile)
+    VIRUSTOTAL_API2_KEY = api_key.read().strip()
+    api_key.close()
+except:
+    print "Couldn't open virustotal key file ~/.virustotal.key"
+    sys.exit(99)
 
-VIRUSTOTAL_SCAN_URL = 'https://www.virustotal.com/vtapi/v2/file/scan'
+VIRUSTOTAL_SCAN_URL     = 'https://www.virustotal.com/vtapi/v2/file/scan'
+VIRUSTOTAL_LOOKUP_URL   = 'https://www.virustotal.com/vtapi/v2/file/report'
+VIRUSTOTAL_COMMENT_URL  = "https://www.virustotal.com/vtapi/v2/comments/put"
 
-def Timestamp(epoch=None):
-    if epoch == None:
-        localTime = time.localtime()
+regex_md5    = "^[0-9a-fA-F]{32}$"
+regex_sha1   = "^[0-9a-fA-F]{40}$"
+regex_sha224 ="^[0-9a-fA-F]{56}$"
+regex_sha256 ="^[0-9a-fA-F]{64}$"
+
+def isHash(hash):
+    hash = hash.strip()
+    if ((not re.match(regex_md5, hash)) and (not re.match(regex_sha1, hash)) and (not re.match(regex_sha224, hash)) and (not re.match(regex_sha256, hash))):
+        return None
     else:
-        localTime = time.localtime(epoch)
-    return '%04d%02d%02d-%02d%02d%02d' % localTime[0:6]
+        return hash
 
-class CSVLogger():
-    def __init__(self, prefix, headers, separator=';'):
-        self.separator = separator
-        self.filename = '%s-%s.csv' % (prefix, Timestamp())
-        self.f = open(self.filename, 'w')
-        self.f.write(self.separator.join(headers) + '\n')
-        self.f.close()
+def VTHTTPHashRequest(filename, options):
+    positives = 0
+    total = 0
+    date = ""
+    permalink = ""
+    hash = None
+    if options.hash:
+        hash = isHash(filename)
+        if hash is None:
+            print "Input was specified to be a hash, but was not parsed as valid hash"
+            sys.exit(3)
+    else:
+        try:
+            hash = hashlib.sha256(open(filename, 'rb').read()).hexdigest()
+        except:
+            print "Cannot calculate hash from file %s." % filename
+            sys.exit(2)
 
-    def PrintAndLog(self, formats, parameters):
-        line = self.separator.join(formats) % parameters
-        print(line)
-        f = open(self.filename, 'a')
-        f.write(line + '\n')
-        f.close()
+    parameters = {  "resource": hash,
+                    "apikey": VIRUSTOTAL_API2_KEY}
+    data = urllib.urlencode(parameters)
+    req = urllib2.Request(VIRUSTOTAL_LOOKUP_URL, data)
+    try:
+        response = urllib2.urlopen(req)
+    except:    
+        print "Cannot communicate with VirusTotal (Network? VirusTotal key?). Aborting."
+        sys.exit(1)
+    string = response.read().decode('utf-8')
+    response = False
+    try:
+        json_obj = json.loads(string)
+        response = json_obj['response_code']
+        positives = json_obj['positives']
+        total = json_obj['total']
+        date = json_obj['scan_date']
+        permalink = json_obj['permalink']
+    except:
+        response = False
+    if response == 1:
+        scans = json_obj['scans']
+        print "File is known by VirusTotal since %s with detection ratio of %i/%i" % (date, positives, total)
+        if options.verbose:
+            print "MD5:\t%s" % json_obj['md5']
+            print "SHA1:\t%s" % json_obj['sha1']
+            print "SHA256:\t%s" % json_obj['sha256']
+            for product, results in scans.iteritems():
+                if results['detected']:
+                    print "    {0:17} {1:40} {2}".format(product, results['result'], results['update'])
+        print permalink
+        response = True
+    else:
+        print "File unknown at VirusTotal"
+    return (response, hash, positives, total, date, permalink)
 
 def VTHTTPScanRequest(filename, options):
-    if filename.lower().endswith('.zip') and not options.zip:
-        oZipfile = None
-        file = None
-        try:
-            oZipfile = zipfile.ZipFile(filename, 'r')
-            file = oZipfile.open(oZipfile.infolist()[0], 'r', 'infected')
-            data = file.read()
-            postfilename = oZipfile.infolist()[0].filename
-        except:
-            return None, sys.exc_info()[1]
-        finally:
-            if file:
-                file.close()
-            if oZipfile:
-                oZipfile.close()
-    else:
-        file = None
-        try:
-            file = open(filename, 'rb')
-            data = file.read()
-            postfilename = filename
-        except IOError as e:
-            return None, str(e)
-        finally:
-            if file:
-                file.close()
+    file = None
+    try:
+        file = open(filename, 'rb')
+        data = file.read()
+        postfilename = filename
+    except IOError as e:
+        return None, str(e)
+    finally:
+        if file:
+            file.close()
     params = []
     params.append(poster.encode.MultipartParam('apikey', VIRUSTOTAL_API2_KEY))
     params.append(poster.encode.MultipartParam('file', value=data, filename=os.path.basename(postfilename)))
     datagen, headers = poster.encode.multipart_encode(params)
     req = urllib2.Request(VIRUSTOTAL_SCAN_URL, datagen, headers)
     try:
-        if sys.hexversion >= 0x020601F0:
-            hRequest = urllib2.urlopen(req, timeout=15)
-        else:
-            hRequest = urllib2.urlopen(req)
+        hRequest = urllib2.urlopen(req)
     except urllib2.HTTPError as e:
         return None, str(e)
     try:
@@ -124,42 +151,18 @@ def VTHTTPScanRequest(filename, options):
         hRequest.close()
     return data, None
 
-def File2Strings(filename):
-    try:
-        f = open(filename, 'r')
-    except:
-        return None
-    try:
-        return map(lambda line:line.rstrip('\n'), f.readlines())
-    except:
-        return None
-    finally:
-        f.close()
-
-def SetProxiesIfNecessary():
-    global HTTP_PROXY
-    global HTTPS_PROXY
-
-    dProxies = {}
-    if HTTP_PROXY != '':
-        dProxies['http'] = HTTP_PROXY
-    if HTTPS_PROXY != '':
-        dProxies['https'] = HTTPS_PROXY
-    if os.getenv('http_proxy') != None:
-        dProxies['http'] = os.getenv('http_proxy')
-    if os.getenv('https_proxy') != None:
-        dProxies['https'] = os.getenv('https_proxy')
-    if dProxies != {}:
-        urllib2.install_opener(urllib2.build_opener(urllib2.ProxyHandler(dProxies), poster.streaminghttp.StreamingHTTPSHandler()))
-
 def SubmitComment(hash, comment):
-    url = "https://www.virustotal.com/vtapi/v2/comments/put"
-    parameters = {"resource": hash,
-                    "comment": comment,
-                    "apikey" : VIRUSTOTAL_API2_KEY}
+    VIRUSTOTAL_COMMENT_URL = "https://www.virustotal.com/vtapi/v2/comments/put"
+    parameters = {  "resource": hash,
+                    "comment" : comment,
+                    "apikey"  : VIRUSTOTAL_API2_KEY}
     data = urllib.urlencode(parameters)
-    req = urllib2.Request(url, data)
-    response = urllib2.urlopen(req)
+    req = urllib2.Request(VIRUSTOTAL_COMMENT_URL, data)
+    try:
+        response = urllib2.urlopen(req)
+    except:
+        print "Cannot communicate with VirusTotal (Network? VirusTotal key?). Aborting."
+        sys.exit(1)
     string = response.read().decode('utf-8')
     response = 0
     try:
@@ -167,75 +170,77 @@ def SubmitComment(hash, comment):
         response = json_obj['response_code']      
     except:
         response = 0
-    if response == 1:
-        print(json_obj['verbose_msg'])
-    else:
-        print "Encountered problem during comment posting. Details:"
-        try:
-            print(json_obj['verbose_msg'])
-        except:
-            print "unkown problem"
-            print string
+    try:
+        # Factually the same if comment was uploaded or already registered
+        if response == 1 or (response == 0 and json_obj['verbose_msg'] == "Duplicate comment"):
+            return True
+    except:
+        return False
 
-def VirusTotalSubmit(filenames, options):
-    global oLogger
-    
-    poster.streaminghttp.register_openers()
-
-    SetProxiesIfNecessary()
-
-    headers = ('Filename', 'Response', 'Message', 'md5', 'sha256', 'Scan ID', 'Permalink')
-    oLogger = CSVLogger('/tmp/virustotal-submit', headers)
-    while filenames != []:
-        filename = filenames[0]
-        filenames = filenames[1:]
-        jsonResponse, error = VTHTTPScanRequest(filename, options)
-        if jsonResponse == None:
-            formats = ('%s', '%s')
-            parameters = (filename, error)
-            oLogger.PrintAndLog(formats, parameters)
+def TrySubmitComment(hash, comment):
+    displayed_waiting = False
+    while not SubmitComment(hash, comment):
+        if not displayed_waiting:
+            sys.stdout.flush()
+            sys.stdout.write("Waiting for VT to accept the comment")
+            sys.stdout.flush()
+            displayed_waiting = True
         else:
-            oResult = jsonalias.loads(jsonResponse)
-            if oResult['response_code'] == 1:
-                formats = ('%s', '%d', '%s', '%s', '%s', '%s', '%s')
-                parameters = (filename, oResult['response_code'], oResult['verbose_msg'], oResult['md5'], oResult['sha256'], oResult['scan_id'], oResult['permalink'])
-                if options.comment:
-                    time.sleep(seconds_delay)
-                    SubmitComment(oResult['sha256'], options.comment)
-            else:
-                formats = ('%s', '%d', '%s')
-                parameters = (filename, oResult['response_code'], oResult['verbose_msg'])
-            oLogger.PrintAndLog(formats, parameters)
-        if filenames != []:
-            time.sleep(options.delay)
+            time.sleep(5)
+            sys.stdout.write(".")
+            sys.stdout.flush()
+    if displayed_waiting:
+        print "\n"
+    print "Comment for hash %s posted (or it existed already)." % hash
+    return True 
 
+def VirusTotalSubmit(filename, options):
+    
+    (file_is_known, hash, positives, total, date, permalink) = VTHTTPHashRequest(filename, options)
+    if file_is_known:
+        if options.comment:
+            TrySubmitComment(hash, options.comment)
+        sys.exit(0)
+    else:
+        if not options.upload:
+            print "To upload it, add --upload (-u) to your request."
+            sys.exit(124)
+        else:
+            sys.stdout.write("Trying to upload file %s: " % filename)
+            sys.stdout.flush()
+            poster.streaminghttp.register_openers()
+            jsonResponse, error = VTHTTPScanRequest(filename, options)
+            if jsonResponse == None:
+                sys.stdout.write("failed for unknown reason!")
+                sys.stdout.flush()
+            else:
+                oResult = jsonalias.loads(jsonResponse)
+                if oResult['response_code'] == 1:
+                    print "success!" 
+                    print "Permalink: %s" % oResult['permalink']
+                    if options.comment and oResult['sha256']:
+                        TrySubmitComment(hash, options.comment)
+                else:
+                    sys.stdout.write("failed! ")
+                    sys.stdout.flush()
+                    sys.exit(-1)
 def Main():
     global VIRUSTOTAL_API2_KEY
-
     oParser = optparse.OptionParser(usage='usage: %prog [options] file\n' + __description__, version='%prog ' + __version__)
-    oParser.add_option('-d', '--delay', type=int, default=16, help='delay in seconds between queries (default 16s, VT rate limit is 4 queries per minute)')
-    oParser.add_option('-k', '--key', default='', help='VirusTotal API key')
-    oParser.add_option('-f', '--file', help='File contains filenames to submit')
-    oParser.add_option('-z', '--zip', action='store_true', default=False, help='Submit the ZIP file, not the content of the ZIP file')
     oParser.add_option('-c', '--comment', default='', help='Comment to be posted along with the file') 
+    oParser.add_option('-u', '--upload', action='store_true', help='Really upload files to VT instead of fetching info based on hash')
+    oParser.add_option('-v', '--verbose', action='store_true', help='Be more verbose, especially while displaying VirusTotal results')
+    oParser.add_option('-H', '--hash', action='store_true', help='Input is a cryptographic hash instead of filename') 
     (options, args) = oParser.parse_args()
-    if not options.file and len(args) == 0:
+    if len(args) == 0:
+        print options
         oParser.print_help()
         print('')
-        print('  Source code put in the public domain by Didier Stevens, no Copyright')
-        print('  Use at your own risk')
-        print('  https://DidierStevens.com')
         return
-    if os.getenv('VIRUSTOTAL_API2_KEY') != None:
-        VIRUSTOTAL_API2_KEY = os.getenv('VIRUSTOTAL_API2_KEY')
-    if options.key != '':
-        VIRUSTOTAL_API2_KEY = options.key
     if VIRUSTOTAL_API2_KEY == '':
-        print('You need to get a VirusTotal API key and set environment variable VIRUSTOTAL_API2_KEY, use option -k or add it to this program.\nTo get your API key, you need a VirusTotal account.')
-    elif options.file:
-        VirusTotalSubmit(File2Strings(options.file), options)
+        print('You need to get a VirusTotal API key and paste it into ~/.virustotal.key.\nTo get your API key, you need a VirusTotal account.')
     else:
-        VirusTotalSubmit(args, options)
+        VirusTotalSubmit(args[0], options)
 
 if __name__ == '__main__':
     Main()
