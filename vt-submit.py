@@ -2,8 +2,8 @@
 
 __description__ = 'Submit files and comments to VirusTotal or lookup scan results by file or hash'
 __author__ = 'Sascha Rommelfangen'
-__version__ = '0.0.1'
-__date__ = '2016/06/01'
+__version__ = '0.0.2'
+__date__ = '2016/06/02'
 
 """
     vt-submit.py, inspired by earlier work of myself and code by Didier Stevens.
@@ -13,7 +13,7 @@ __date__ = '2016/06/01'
                 Upload file to VirusTotal if explicitly specified
                 Add user comment to resource at VirusTotal
     
-    Copyright:  Sascha Rommelfangen, CIRCL, Smile g.i.e, 2016-06-01
+    Copyright:  Sascha Rommelfangen, CIRCL, Smile g.i.e, 2016
     
     License:    GNU General Public License v2.0
 """
