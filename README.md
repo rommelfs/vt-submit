@@ -2,9 +2,9 @@
 vt-submit.py, inspired by earlier work of self() and code by Didier Stevens.
 
 Purposes:
-  Get results from VirusTotal for a given file
-  Upload file to VirusTotal if explicitly specified
-  Add user comment to resource at VirusTotal
+- Get results from VirusTotal for a given file
+- Upload file to VirusTotal if explicitly specified
+- Add user comment to resource at VirusTotal
 
 Copyright:  Sascha Rommelfangen, CIRCL, Smile g.i.e, 2016-06-01
 
