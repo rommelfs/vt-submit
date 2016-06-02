@@ -1,16 +1,15 @@
 # vt-submit
-Program to submit files (with comments) to VirusTotal
+vt-submit.py, inspired by earlier work of self() and code by Didier Stevens.
 
-Source code put in public domain by Didier Stevens, no Copyright
-https://DidierStevens.com
-Use at your own risk
+Purposes:
+  Get results from VirusTotal for a given file
+  Upload file to VirusTotal if explicitly specified
+  Add user comment to resource at VirusTotal
 
-Addition to post comments along with a file upload by Sascha Rommelfangen (@rommelfs), CIRCL
+Copyright:  Sascha Rommelfangen, CIRCL, Smile g.i.e, 2016-06-01
+
+License:    GNU General Public License v2.0
 
 History:
--  2013/03/10: start based on virustotal-search.py version 0.0.5
--  2013/04/19: refactoring; proxies; password protected ZIP file
--  2013/09/22: bugfix error opening file
--  2013/12/06: v0.0.3: extra error handling
--  2013/12/10: handling when response_code not 1
--  2016/05/27: (@rommelfs) added support to post comments
+-  2016/06/02: refactored code to do the current version/features
+-  2016/05/27: added support to Didier Stevens' vt-submit.py to post comments
